@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      # Development values by default; a real value comes from the shell or an .env file. The Postgres user and
+      # password only take effect on an empty data directory (docker compose down -v after changing them).
+      POSTGRES_DB: ${POSTGRES_DB:-ledger_split_engine}
+      POSTGRES_USER: ${POSTGRES_USER:-ledger_split_engine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ledger_split_engine}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Init scripts only run on an empty data directory: recreate the volume
+      # (docker compose down -v) after adding or changing one.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # The application as a container. Opt-in, so a plain `docker compose up -d` still starts Postgres only (the
+  # quickstart runs the application with ./mvnw spring-boot:run): docker compose --profile app up -d --build
+  app:
+    profiles: ["app"]
+    build: .
+    image: ledger_split_engine:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The application reads its settings from the environment (Spring Boot maps SPRING_DATASOURCE_URL to
+      # spring.datasource.url and so on). The ledger_app password is set by docker/initdb/01-create-ledger-app-role.sql:
+      # a value here has to match the one that script gave the role.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-ledger_split_engine}
+      SPRING_DATASOURCE_USERNAME: ${LEDGER_APP_USER:-ledger_app}
+      SPRING_DATASOURCE_PASSWORD: ${LEDGER_APP_PASSWORD:-ledger_app}
+      SPRING_FLYWAY_USER: ${POSTGRES_USER:-ledger_split_engine}
+      SPRING_FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:-ledger_split_engine}
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:

@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: ledger_split_engine
+  datasource:
+    # The application connects as ledger_app: SELECT and INSERT only, no UPDATE/DELETE/TRUNCATE.
+    url: jdbc:postgresql://localhost:5433/ledger_split_engine
+    username: ledger_app
+    password: ledger_app
+    hikari:
+      # Getting a pooled connection fails after 3 s, not Hikari's 30 s, and the pool checks an idle connection for at
+      # most 2 s, not 5 s: the health check waits on the pool, and a probe does not wait 30 s (see the service-health
+      # design). The validation timeout has to stay below the connection timeout.
+      connection-timeout: 3000
+      validation-timeout: 2000
+  flyway:
+    # Migrations run as the owner (the bootstrap Postgres user); only the owner can change the schema.
+    user: ledger_split_engine
+    password: ledger_split_engine
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    deserialization:
+      fail-on-unknown-properties: true
+
+# The only operational endpoint is /actuator/health: the status and nothing else (service-health spec). Discovery is
+# off because it would still list the exposed endpoints at /actuator; disk space is off because a full developer disk
+# is not the service being down.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+      discovery:
+        enabled: false
+  endpoint:
+    health:
+      show-details: never
+      # Liveness/readiness groups are on by default and would add a "groups" member to the answer.
+      probes:
+        enabled: false
+  health:
+    diskspace:
+      enabled: false
+    # Replaced by config.DatabaseHealthIndicator: Boot's check hangs on a database that is frozen, not refusing.
+    db:
+      enabled: false

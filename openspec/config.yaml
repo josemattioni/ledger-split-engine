@@ -1,0 +1,21 @@
+schema: spec-driven
+
+# Project context, shown to AI when it creates artifacts. The rules that bind every change are in
+# PROJECT-CONVENTIONS.md; what the system guarantees, and where it stops, is in docs/.
+context: |
+  ledger_split_engine is the ledger core of a Brazilian card sub-acquirer's split and settlement engine: an
+  append-only double-entry ledger (accounts, balanced journal entries, idempotent posting, reversals, as-of
+  balances). Splitting, D+N settlement scheduling and fee calculation are NOT built. Money is signed integer
+  centavos, BRL only.
+  Stack: Java 21, Spring Boot 4.1 (Jackson 3), plain JDBC (no JPA), Flyway, PostgreSQL 17, Testcontainers.
+  Architecture: hexagonal. The domain has no Spring; use cases live in application; adapters in adapter.web and
+  adapter.persistence. The database is a second layer: privileges, append-only triggers and backstop checks, each
+  with its own SQLSTATE (LDG01 to LDG06).
+  Working rules:
+  - src/contractTest is the QA role's black-box suite. Never edit it without the owner's explicit authorization; if
+    an intended change turns a contract test red, leave it red and report it.
+  - Each negative test has exactly one defect and asserts the problem type for a 422. Database backstop tests
+    commit for real (no @Transactional rollback).
+  - A change that alters behavior or a stated guarantee updates the specs, PROJECT-CONVENTIONS.md and the docs.
+  - Comments say why in a few lines; the story of a decision belongs in design.md.
+  - Verify with ./mvnw verify (Docker running); the baseline is in the latest archived change's tasks.md.

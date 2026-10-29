@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The whole build: unit and integration tests, then the black-box contract suite. Testcontainers starts Postgres, and
+  # the runner has Docker. `./mvnw` needs the executable bit that the repository records for mvnw.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build and test
+        run: ./mvnw -B verify
+      - name: Keep the test reports when the build fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports
+            target/failsafe-reports
+          if-no-files-found: ignore
+
+  # The container image: it builds, starts after its database is healthy, and answers its health endpoint.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image and start it with its database
+        run: docker compose --profile app up -d --build --wait --wait-timeout 180
+      - name: Check the health endpoint
+        run: curl --fail --silent --show-error http://localhost:8080/actuator/health | grep -q '"status":"UP"'
+      - name: Show the application log when a step failed
+        if: failure()
+        run: docker compose --profile app logs app
+      - name: Stop and remove the containers
+        if: always()
+        run: docker compose --profile app down -v

@@ -1,0 +1,13 @@
+# What the image build does not need: it compiles src/main with the Maven wrapper and nothing else.
+target/
+.git/
+.github/
+.claude/
+.idea/
+.vscode/
+docs/
+docker/
+openspec/
+src/test/
+src/contractTest/
+*.md

@@ -1,0 +1,41 @@
+## 1. Baseline
+
+- [x] 1.1 Before changing any code, run `./mvnw verify` on the untouched tree (Docker running, `docker compose up -d` for `LedgerSplitEngineApplicationTests`, `JAVA_HOME` set to the JDK 21) and record the unit/integration test count and the failing contract tests by class and method — verify the baseline (expected: 194 tests green; 15 contract failures, all earlier-slice items) is written down in the task's report before 2.1 starts
+
+## 2. Strict JSON Parsing
+
+- [x] 2.1 In `config.JacksonConfig`, enable `StreamReadFeature.STRICT_DUPLICATE_DETECTION` and `EnumFeature.FAIL_ON_NUMBERS_FOR_ENUMS` in the existing customizer and extend its Javadoc to cover both — verify with `JournalEntryControllerTest` (a line repeating `amount_cents` → 400, default type, use case never called; `lines` given twice → 400, never called) and `AccountControllerTest` (add `@Import(JacksonConfig.class)` if missing; `"type":"0"` and `"type":"3"` → 400 and the port is never called; `"type"` given twice → 400; a valid registration still 201). Each test has one defect
+
+## 3. Domain Rules
+
+- [x] 3.1 Add `domain.account.AccountCode` (`MAX_LENGTH`, the anchored pattern, `isWellFormed(String)`, the shape description) and make `Account` use it with its error message unchanged — verify `AccountTest` passes untouched and a new `AccountCodeTest` covers well-formed codes (`marketplace_commission`, `seller_payable:123`, `acquirer_fee`), each malformed shape on its own (uppercase, leading space, trailing space, leading digit, hyphen without a `:` suffix, 101 characters) and exactly 100 characters accepted
+- [x] 3.2 Add `LineLimitExceededException` (unchecked, not an `IllegalArgumentException`; detail `journal entry has N lines; at most 100 are permitted`) and `JournalEntry.MAX_LINES = 100`, checked right after the two-line minimum — verify with `JournalEntryTest`: 100 balanced lines on distinct accounts accepted; 101 rejected with the detail naming 101 and 100; `precedence_aTooLongEntryIsReportedAsOverTheLimitBeforeItsLinesAreChecked` (101 lines, one of them zero) → `LineLimitExceededException`
+- [x] 3.3 Add `InvalidAccountCodeException` (unchecked, not an `IllegalArgumentException`; detail `line N: account_code "X" must be ...` built from `AccountCode`'s shape description) and check every line's code in `JournalEntry` after the line limit and before the zero-amount check (design.md Decision 4) — verify with `JournalEntryTest`: upper-cased, leading-space and trailing-space codes on an otherwise valid entry each → `InvalidAccountCodeException` naming the line; `precedence_aMalformedCodeIsReportedBeforeAZeroAmount`; every existing `JournalEntryTest` case still passes
+- [x] 3.4 Build `JournalEntry`'s idempotency-key pattern from `MAX_IDEMPOTENCY_KEY_LENGTH` — verify `rejectsOverLengthIdempotencyKey` and `rejectsMalformedIdempotencyKey` still pass, and confirm with `grep -rn "org.springframework" src/main/java/com/github/josemattioni/ledger_split_engine/domain` that the domain still has no Spring imports
+
+## 4. Web Layer
+
+- [x] 4.1 Add `ProblemTypes.LINE_LIMIT_EXCEEDED` and `ProblemTypes.INVALID_ACCOUNT_CODE` and one 422 handler each in `ApiExceptionHandler` — verify with `JournalEntryControllerTest` on real bodies (no use-case stub): 101 lines → 422 `line-limit-exceeded`, use case never called; an upper-cased code → 422 `invalid-account-code` with the line in the detail, never called
+- [x] 4.2 Add `adapter.web.InvalidRequestException` (400, message as detail) with a static helper that rethrows an `IllegalArgumentException` from a request-to-domain construction; wrap `new Account(...)` in `AccountController` and the `EntryLine`/`JournalEntry` construction in `JournalEntryController`; throw it directly for the header-count check; replace the `IllegalArgumentException` handler with an `InvalidRequestException` handler — verify every existing 400 test in `AccountControllerTest`, `JournalEntryControllerTest` and both API integration tests still passes unchanged, and add `anIllegalArgumentExceptionFromTheUseCaseIs500NotA400` (`JournalEntryControllerTest`, use case stubbed to throw it → 500, generic detail) and the same for `AccountPort.register` in `AccountControllerTest`
+
+## 5. End-to-End Tests
+
+- [x] 5.1 Extend `JournalEntryApiIntegrationTest`, one defect per test and asserting `$.type`: a balanced 100-line entry on 100 registered accounts → 201 with lines numbered 1..100; 101 lines → 422 `line-limit-exceeded` and the accounts' balances stay 0; an upper-cased code and a padded registered code → 422 `invalid-account-code`, nothing posted; a repeated `amount_cents` → 400, nothing posted, and the same key then posts 201 with no replay header; and `precedence_aReusedKeyWithAMalformedAccountCodeReportsTheMalformedCode` (used key + upper-cased code → 422 `invalid-account-code`, original intact) — verify the class passes with every pre-existing test in it
+- [x] 5.2 Extend `AccountApiIntegrationTest`: `"type":"0"` → 400 and `GET` for the code is 404; a repeated `type` → 400 and not created — verify the class passes
+
+## 6. Cleanups
+
+- [x] 6.1 Move `uniqueCode(prefix)`, `uniqueIdempotencyKey()` and an account-registration helper into `AbstractIntegrationTest` and delete the copies in its subclasses (`JdbcAccountAdapterTest`, `AppendOnlyTriggersTest`, `DegenerateEntryBackstopsTest`, `EntryLinesBalanceTriggerTest`, `IdempotentInsertConcurrencyTest`, `IdempotentInsertOrFindTest`, `JdbcJournalEntryAdapterTest`, `LedgerAppPrivilegesTest`, `AccountApiIntegrationTest`, `JournalEntryApiIntegrationTest`, `IdempotentPostRaceTest`), keeping helpers that differ in substance — verify `grep -rn "private static String uniqueCode\|private static String uniqueIdempotencyKey" src/test` returns nothing and the full `./mvnw test` is green with the same count of pre-existing tests
+- [x] 6.2 Return the `COALESCE`'d value directly from `JdbcJournalEntryAdapter.balanceOf`; make `IdempotentInsertConcurrencyTest.awaitLockWait` poll through one owner connection; drop the retired 409 from `DegenerateEntryBackstopsTest`'s assertion message (leave `V3__append_only_ledger.sql` untouched: an applied migration's checksum must not change) — verify the balance and concurrency tests pass and `grep -rn "409" src/test/java/com/github/josemattioni/ledger_split_engine/adapter/persistence` returns nothing
+
+## 7. Conventions and Documentation
+
+- [x] 7.1 Update `PROJECT-CONVENTIONS.md`: a JSON property repeated within one object is rejected with 400, like an unknown one; a 400 is only for a request the client got wrong, raised while building domain objects from the request (`InvalidRequestException`), and every other failure is the generic 500 — verify by reading the file
+- [x] 7.2 Update `README.md`: the 100-line limit and why it exists; that a line's `account_code` must have the registration shape and is compared exactly (422 here, 400 at registration, and why); repeated JSON properties and quoted enum indexes rejected; the two new rows in the 422 problem-type table; the evaluation-order paragraph — verify by reading that each point is present
+- [x] 7.3 Walk the new behavior against the running app (`./mvnw spring-boot:run`, compose Postgres up; no volume reset, since there is no migration): register an account with `"type":"0"` (400); post a body with a repeated `amount_cents` (400); post an entry with an upper-cased code (422 `invalid-account-code`); post a valid entry and retry it with the same key and an upper-cased code (422 `invalid-account-code`, balance unchanged) — the running stack behaving as documented is the deliverable
+
+## 8. Verification and QA Hand-off
+
+- [x] 8.1 Run the full `./mvnw test` and verify it is green, reporting the new total against the baseline from 1.1
+- [x] 8.2 Run `openspec validate "harden-request-validation" --strict` and verify it passes
+- [x] 8.3 Run `./mvnw verify` and report the contract-suite result against the baseline from 1.1 without editing any contract test: list every failure and mark each as baseline or new. The expected new failures are exactly the three `IdempotentReplayContractTest.accountCodeSpellingNotNormalized` cases (`upper-cased`, `leading space`, `trailing space`) from design.md Decision 7; any other new failure is investigated and reported, not assumed
